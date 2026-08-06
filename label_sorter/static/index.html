@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>面单SKU排序合并</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c2330; --muted: #6b7280;
+    --accent: #2563eb; --accent-hover: #1d4ed8; --border: #e3e6eb;
+    --ok: #16a34a; --warn: #d97706; --err: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 22px; margin-bottom: 18px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 14px; }
+  /* 上传区 */
+  #drop {
+    border: 2px dashed var(--border); border-radius: 10px;
+    padding: 34px 16px; text-align: center; color: var(--muted);
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  #drop.hover { border-color: var(--accent); background: #eff4ff; }
+  #drop strong { color: var(--accent); }
+  #filelist { margin: 12px 0 0; padding: 0; list-style: none; font-size: 13px; }
+  #filelist li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
+    margin-top: 6px; background: #fafbfc;
+  }
+  #filelist .rm { color: var(--err); cursor: pointer; border: none;
+    background: none; font-size: 14px; }
+  /* 配置 */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  input[type=text], input[type=password], select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; background: #fff; color: var(--text);
+  }
+  input:focus, select:focus { outline: 2px solid #bfd3fb; border-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .llm-only { display: none; }
+  .llm-only.show { display: block; }
+  /* 按钮 */
+  .btn {
+    display: inline-block; background: var(--accent); color: #fff; border: none;
+    padding: 11px 26px; font-size: 15px; border-radius: 9px; cursor: pointer;
+  }
+  .btn:hover { background: var(--accent-hover); }
+  .btn:disabled { background: #9db4e6; cursor: not-allowed; }
+  .btn.dl { background: var(--ok); }
+  .btn.ghost {
+    background: #fff; color: var(--muted); border: 1px solid var(--border);
+    padding: 10px 18px; font-size: 14px;
+  }
+  .btn.ghost:hover { background: #f2f5f9; color: var(--text); }
+  .actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+  #saved-tip { font-size: 12px; color: var(--ok); }
+  /* 进度 */
+  .bar-outer { background: #e9edf2; border-radius: 6px; height: 10px; overflow: hidden; }
+  .bar-inner { background: var(--accent); height: 100%; width: 0; transition: width .3s; }
+  #progress-text { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  /* 页面状态网格 */
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 12px 0 4px;
+    font-size: 12px; color: var(--muted); align-items: center; }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .sw.pending, .cell.pending { background: #dfe3e9; }
+  .sw.running, .cell.running { background: #60a5fa; }
+  .sw.ok,      .cell.ok      { background: #22c55e; }
+  .sw.none,    .cell.none    { background: #fbbf24; }
+  .sw.error,   .cell.error   { background: #ef4444; }
+  .sw.fixed,   .cell.fixed   { background: #a855f7; }
+  .chk { display: flex; align-items: center; gap: 6px; font-size: 13px;
+    color: var(--text); margin: 0; padding: 8px 0; cursor: pointer; }
+  .chk input { width: auto; margin: 0; }
+  .gridwrap { margin-top: 12px; }
+  .gridwrap h3 {
+    font-size: 13px; font-weight: 600; margin: 0 0 7px; color: var(--text);
+  }
+  .gridwrap h3 span { color: var(--muted); font-weight: 400; }
+  .grid-cells {
+    display: grid; grid-template-columns: repeat(15, 1fr); gap: 4px;
+  }
+  .cell {
+    position: relative; aspect-ratio: 1; border-radius: 4px;
+    transition: background .25s;
+  }
+  .cell::after {
+    content: attr(data-p); position: absolute; top: 1px; left: 3px;
+    font-size: 9px; line-height: 1.2; color: rgba(0,0,0,.55);
+    font-family: ui-monospace, Consolas, monospace;
+  }
+  .cell.running { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  /* 历史记录 */
+  .btn.ghost.tiny { padding: 3px 10px; font-size: 12px; margin-left: 8px;
+    vertical-align: middle; }
+  .hist-item {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px; font-size: 13px; background: #fafbfc;
+  }
+  .hist-head { display: flex; justify-content: space-between; gap: 10px;
+    align-items: center; flex-wrap: wrap; }
+  .hist-time { color: var(--muted); font-size: 12px; }
+  .hist-meta { color: var(--muted); font-size: 12px; margin-top: 5px; }
+  .hist-item .btn.dl { padding: 5px 14px; font-size: 12px; border-radius: 7px; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 10px; }
+  .tag.done { background: #dcfce7; color: #15803d; }
+  .tag.error { background: #fee2e2; color: #b91c1c; }
+  .tag.verify { background: #dbeafe; color: #1d4ed8; margin-left: 4px; }
+  #log {
+    margin-top: 12px; max-height: 220px; overflow-y: auto; font-size: 12px;
+    font-family: ui-monospace, Consolas, monospace; background: #0f172a;
+    color: #cbd5e1; border-radius: 8px; padding: 10px 12px; line-height: 1.7;
+    white-space: pre-wrap;
+  }
+  /* 结果 */
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 6px 0 14px; }
+  .stat {
+    background: #f2f5f9; border-radius: 8px; padding: 10px 16px; font-size: 13px;
+  }
+  .stat b { display: block; font-size: 20px; }
+  .warnbox {
+    background: #fef7ed; border: 1px solid #f5d9ab; color: #92600a;
+    border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px;
+  }
+  .rcbox {
+    background: #faf5ff; border: 1px solid #e2d0f7; color: #7e22ce;
+    border-radius: 8px; padding: 10px 12px; font-size: 13px;
+    margin-bottom: 12px; line-height: 1.7;
+  }
+  .diffbox {
+    background: #f0f7ff; border: 1px solid #c3ddf7; color: #1d4ed8;
+    border-radius: 8px; padding: 10px 12px; font-size: 13px;
+    margin-bottom: 12px; line-height: 1.7;
+  }
+  .diffbox.same { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+  .errbox {
+    background: #fdf0ef; border: 1px solid #f2c3bf; color: var(--err);
+    border-radius: 8px; padding: 10px 12px; font-size: 13px;
+    white-space: pre-wrap; word-break: break-all; line-height: 1.6;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>面单 SKU 排序合并</h1>
+  <div class="sub">上传一个或多个面单 PDF，按 SKU 全局排序后合并为一个新 PDF（文本层优先，图片 SKU 可用 OCR / 大模型识别兜底）</div>
+
+  <div class="card">
+    <h2>① 上传 PDF</h2>
+    <div id="drop">拖拽 PDF 到此处，或 <strong>点击选择文件</strong>（可多选）</div>
+    <input type="file" id="fileinput" accept=".pdf" multiple hidden>
+    <ul id="filelist"></ul>
+  </div>
+
+  <div class="card">
+    <h2>② 排序配置</h2>
+    <div class="grid">
+      <div>
+        <label for="prefixes">SKU 前缀（逗号分隔）</label>
+        <input type="text" id="prefixes" value="FDC,HD,BDL,PQ,AMB,LZ">
+        <div class="hint">只有匹配这些前缀的编号才会作为排序依据</div>
+      </div>
+      <div>
+        <label for="fallback">图片 SKU 识别方案</label>
+        <select id="fallback">
+          <option value="ocr">本地 OCR（免费）</option>
+          <option value="ocr+llm">OCR 优先，认不出再用大模型</option>
+          <option value="llm" selected>全部用大模型（多模态）</option>
+          <option value="none">不识别图片（仅文本层）</option>
+        </select>
+        <div class="hint">部分面单的 SKU 是图片印刷，文本层读不到时按此方案兜底</div>
+      </div>
+      <div>
+        <label for="threads">并发线程数</label>
+        <input type="number" id="threads" value="4" min="1" max="16">
+        <div class="hint">大模型识别以等待网络为主，多线程能明显加快；OCR 不受影响</div>
+      </div>
+      <div>
+        <label>可疑页复查</label>
+        <label class="chk"><input type="checkbox" id="recheck" checked>
+          自动切块重读疑似漏读一位的页</label>
+        <div class="hint">如 HD-72 混在一堆 HD-722 里；只查可疑页，每页多 3 次调用</div>
+      </div>
+      <div class="llm-only" id="provider-wrap">
+        <label for="provider">大模型接口</label>
+        <select id="provider">
+          <option value="anthropic">Anthropic（Claude 官方）</option>
+          <option value="openai" selected>OpenAI 协议（可自定义地址）</option>
+        </select>
+        <div class="hint">OpenAI 协议可对接官方 API、中转站或自建服务</div>
+      </div>
+      <div class="llm-only" data-prov="anthropic" id="model-wrap">
+        <label for="model">Claude 模型</label>
+        <select id="model">
+          <option value="claude-opus-5" selected>claude-opus-5（最准）</option>
+          <option value="claude-sonnet-5">claude-sonnet-5（均衡）</option>
+          <option value="claude-haiku-4-5">claude-haiku-4-5（最快最省）</option>
+        </select>
+      </div>
+      <div class="llm-only" data-prov="anthropic" id="key-wrap">
+        <label for="apikey">Anthropic API Key</label>
+        <input type="password" id="apikey" placeholder="留空则使用服务器环境变量 ANTHROPIC_API_KEY">
+      </div>
+      <div class="llm-only" data-prov="openai" id="baseurl-wrap">
+        <label for="baseurl">Base URL</label>
+        <input type="text" id="baseurl" placeholder="https://api.openai.com/v1">
+        <div class="hint">必须填到 <b>/v1</b> 为止，漏了会被网关拦成 403；留空则用官方地址</div>
+      </div>
+      <div class="llm-only" data-prov="openai" id="omodel-wrap">
+        <label for="omodel">模型名</label>
+        <input type="text" id="omodel" placeholder="gpt-4o">
+        <div class="hint">必须是支持图片输入的多模态模型</div>
+      </div>
+      <div class="llm-only" data-prov="openai" id="okey-wrap">
+        <label for="okey">API Key</label>
+        <input type="password" id="okey" placeholder="留空则使用服务器环境变量 OPENAI_API_KEY">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="start" disabled>开始排序合并</button>
+      <button class="btn ghost" id="save">保存配置</button>
+      <span id="saved-tip"></span>
+    </div>
+  </div>
+
+  <div class="card hidden" id="progress-card">
+    <h2>③ 处理进度</h2>
+    <div class="bar-outer"><div class="bar-inner" id="bar"></div></div>
+    <div id="progress-text">等待开始…</div>
+    <div class="legend">
+      <span><i class="sw pending"></i>待处理</span>
+      <span><i class="sw running"></i>处理中</span>
+      <span><i class="sw ok"></i>已识别</span>
+      <span><i class="sw none"></i>无 SKU</span>
+      <span><i class="sw error"></i>出错</span>
+      <span><i class="sw fixed"></i>复查修正</span>
+    </div>
+    <div id="grids"></div>
+    <div id="log"></div>
+  </div>
+
+  <div class="card hidden" id="result-card">
+    <h2>④ 结果</h2>
+    <div class="stats" id="stats"></div>
+    <div class="warnbox hidden" id="warnbox"></div>
+    <div class="rcbox hidden" id="rcbox"></div>
+    <div class="warnbox hidden" id="suspbox"></div>
+    <div class="diffbox hidden" id="diffbox"></div>
+    <div class="errbox hidden" id="errbox"></div>
+    <div class="actions">
+      <button class="btn dl hidden" id="download">下载排序后的 PDF</button>
+      <button class="btn ghost hidden" id="verify">用相同配置复查比对</button>
+      <span id="verify-tip" class="hint" style="margin:0"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>⑤ 历史记录 <button class="btn ghost tiny" id="refresh-hist">刷新</button></h2>
+    <div id="history"><div class="hint">加载中…</div></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let files = [];
+let pollTimer = null;
+
+// ---- 上传区 ----
+$("drop").onclick = () => $("fileinput").click();
+$("fileinput").onchange = (e) => addFiles(e.target.files);
+["dragover", "dragenter"].forEach(ev =>
+  $("drop").addEventListener(ev, e => { e.preventDefault(); $("drop").classList.add("hover"); }));
+["dragleave", "drop"].forEach(ev =>
+  $("drop").addEventListener(ev, e => { e.preventDefault(); $("drop").classList.remove("hover"); }));
+$("drop").addEventListener("drop", e => addFiles(e.dataTransfer.files));
+
+function addFiles(list) {
+  for (const f of list) {
+    if (!f.name.toLowerCase().endsWith(".pdf")) continue;
+    if (files.some(x => x.name === f.name && x.size === f.size)) continue;
+    files.push(f);
+  }
+  renderFiles();
+}
+function renderFiles() {
+  const ul = $("filelist");
+  ul.innerHTML = "";
+  files.forEach((f, i) => {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = `${f.name}（${(f.size / 1048576).toFixed(1)} MB）`;
+    const rm = document.createElement("button");
+    rm.className = "rm"; rm.textContent = "✕";
+    rm.onclick = () => { files.splice(i, 1); renderFiles(); };
+    li.append(name, rm);
+    ul.appendChild(li);
+  });
+  $("start").disabled = files.length === 0;
+}
+
+// ---- LLM 相关配置显隐 ----
+function syncVisibility() {
+  const useLlm = $("fallback").value.includes("llm");
+  const prov = $("provider").value;
+  document.querySelectorAll(".llm-only").forEach(el => {
+    // 无 data-prov 的（如接口选择本身）在两种接口下都显示
+    const provOk = !el.dataset.prov || el.dataset.prov === prov;
+    el.classList.toggle("show", useLlm && provOk);
+  });
+}
+$("fallback").onchange = syncVisibility;
+$("provider").onchange = syncVisibility;
+
+// ---- 配置存取（存在本浏览器 localStorage，不上传服务器）----
+const CFG_KEY = "label_sorter_config_v1";
+const CFG_FIELDS = ["prefixes", "fallback", "threads", "recheck", "provider",
+                    "model", "apikey", "baseurl", "omodel", "okey"];
+const getVal = (el) => el.type === "checkbox" ? el.checked : el.value;
+const setVal = (el, v) => {
+  if (el.type === "checkbox") el.checked = !!v; else el.value = v;
+};
+
+$("save").onclick = () => {
+  const cfg = {};
+  CFG_FIELDS.forEach(id => cfg[id] = getVal($(id)));
+  try {
+    localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+    flashTip("已保存到本浏览器");
+  } catch (err) {
+    flashTip("保存失败: " + err.message, true);
+  }
+};
+
+function flashTip(msg, isErr) {
+  const tip = $("saved-tip");
+  tip.textContent = msg;
+  tip.style.color = isErr ? "var(--err)" : "var(--ok)";
+  clearTimeout(flashTip.timer);
+  flashTip.timer = setTimeout(() => tip.textContent = "", 2500);
+}
+
+function loadConfig() {
+  let cfg;
+  try {
+    cfg = JSON.parse(localStorage.getItem(CFG_KEY) || "{}");
+  } catch {
+    return;  // 存档损坏就用默认值
+  }
+  CFG_FIELDS.forEach(id => {
+    if (cfg[id] !== undefined && cfg[id] !== null) setVal($(id), cfg[id]);
+  });
+}
+loadConfig();
+syncVisibility();
+
+// ---- 提交任务 ----
+$("start").onclick = async () => {
+  $("start").disabled = true;
+  $("progress-card").classList.remove("hidden");
+  $("result-card").classList.add("hidden");
+  $("log").textContent = "";
+  $("grids").innerHTML = "";
+  cells = [];
+  $("verify").classList.add("hidden");
+  $("diffbox").classList.add("hidden");
+  $("bar").style.width = "0";
+  $("progress-text").textContent = "上传中…";
+
+  const fd = new FormData();
+  files.forEach(f => fd.append("files", f));
+  fd.append("prefixes", $("prefixes").value);
+  fd.append("fallback", $("fallback").value);
+  fd.append("threads", $("threads").value);
+  fd.append("recheck", $("recheck").checked ? "1" : "0");
+  const prov = $("provider").value;
+  fd.append("provider", prov);
+  if (prov === "openai") {
+    fd.append("model", $("omodel").value.trim() || "gpt-4o");
+    fd.append("api_key", $("okey").value);
+    fd.append("base_url", $("baseurl").value.trim());
+  } else {
+    fd.append("model", $("model").value);
+    fd.append("api_key", $("apikey").value);
+  }
+
+  try {
+    const res = await fetch("/api/jobs", { method: "POST", body: fd });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const { job_id } = await res.json();
+    poll(job_id, 0);
+  } catch (err) {
+    showError("提交失败: " + err.message);
+    $("start").disabled = false;
+  }
+};
+
+// ---- 页面状态网格 ----
+let cells = [];  // 全局页序 -> DOM 节点，与后端 page_status 下标一一对应
+
+function buildGrids(fileList) {
+  $("grids").innerHTML = "";
+  cells = [];
+  fileList.forEach(f => {
+    const wrap = document.createElement("div");
+    wrap.className = "gridwrap";
+    const h = document.createElement("h3");
+    h.innerHTML = `${esc(f.name)} <span>（${f.pages} 页）</span>`;
+    const box = document.createElement("div");
+    box.className = "grid-cells";
+    for (let i = 1; i <= f.pages; i++) {
+      const c = document.createElement("div");
+      c.className = "cell pending";
+      c.dataset.p = i;
+      c.title = `${f.name} 第${i}页`;
+      box.appendChild(c);
+      cells.push(c);
+    }
+    wrap.append(h, box);
+    $("grids").appendChild(wrap);
+  });
+}
+
+function paintGrids(status) {
+  if (!status) return;
+  status.forEach((s, i) => {
+    const c = cells[i];
+    if (c && !c.classList.contains(s)) c.className = "cell " + s;
+  });
+}
+
+// ---- 轮询进度 ----
+function poll(jobId, logFrom) {
+  pollTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/jobs/${jobId}?log_from=${logFrom}`);
+      const j = await res.json();
+      if (!cells.length && j.files) buildGrids(j.files);
+      paintGrids(j.page_status);
+      if (j.total > 0) {
+        $("bar").style.width = (100 * j.done / j.total).toFixed(1) + "%";
+        const running = (j.page_status || []).filter(s => s === "running").length;
+        $("progress-text").textContent =
+          `已处理 ${j.done} / ${j.total} 页` + (running ? `，${running} 页处理中` : "");
+      }
+      if (j.log.length) {
+        $("log").textContent += j.log.join("\n") + "\n";
+        $("log").scrollTop = $("log").scrollHeight;
+      }
+      if (j.status === "done") return showResult(jobId, j);
+      if (j.status === "error") {
+        showError("处理失败: " + j.error);
+        $("start").disabled = false;
+        return;
+      }
+      poll(jobId, j.log_next);
+    } catch {
+      poll(jobId, logFrom);  // 网络抖动继续轮询
+    }
+  }, 800);
+}
+
+// ---- 结果展示 ----
+function showResult(jobId, j) {
+  const stats = j.stats;
+  lastJobId = jobId;
+  $("bar").style.width = "100%";
+  $("progress-text").textContent = "处理完成";
+  $("result-card").classList.remove("hidden");
+  renderDiff(j);
+  let html = `<div class="stat"><b>${stats.total}</b>总页数</div>`;
+  for (const [k, v] of Object.entries(stats.sources)) {
+    html += `<div class="stat"><b>${v}</b>${SRC_NAME[k] || k}</div>`;
+  }
+  $("stats").innerHTML = html;
+  if (stats.unrecognized.length) {
+    $("warnbox").classList.remove("hidden");
+    $("warnbox").textContent =
+      `有 ${stats.unrecognized.length} 页未识别到 SKU，已保持原顺序排在文件末尾: ` +
+      stats.unrecognized.map(u => `${u.file} 第${u.page}页`).join("、");
+  } else {
+    $("warnbox").classList.add("hidden");
+  }
+
+  // 复查结果
+  const rc = stats.rechecked || [];
+  const fixed = rc.filter(r => r.changed);
+  if (rc.length) {
+    $("rcbox").classList.remove("hidden");
+    $("rcbox").innerHTML =
+      `🔍 复查了 ${rc.length} 页，修正 ${fixed.length} 页：<br>` +
+      rc.map(r => `　${esc(r.file)} 第${r.page}页　${esc(r.before)} ` +
+        (r.changed ? `→ <b>${esc(r.after)}</b>（已按复查结果修正）`
+                   : "（复查确认无误）")).join("<br>");
+  } else {
+    $("rcbox").classList.add("hidden");
+  }
+
+  // 疑似漏读一位的 SKU（如 HD-72 混在一堆 HD-722 里）
+  const susp = stats.suspicious || [];
+  if (susp.length) {
+    $("suspbox").classList.remove("hidden");
+    $("suspbox").innerHTML = "⚠ 疑似识别有误，建议人工核对这几页：<br>" +
+      susp.map(s => {
+        const pages = s.pages.map(p => `${p.file} 第${p.page}页`).join("、");
+        return `　<b>${esc(s.sku)}</b>（${s.count}页）可能是 ` +
+               `<b>${esc(s.like)}</b>（${s.like_count}页）漏读一位 —— ${esc(pages)}`;
+      }).join("<br>");
+  } else {
+    $("suspbox").classList.add("hidden");
+  }
+  $("errbox").classList.add("hidden");
+  // 出错的页（区别于"读完了但没SKU"）
+  const errs = stats.errors || [];
+  if (errs.length) {
+    $("errbox").classList.remove("hidden");
+    $("errbox").textContent = `有 ${errs.length} 页识别时出错：\n` +
+      errs.slice(0, 5).map(e => `  ${e.file} 第${e.page}页 — ${e.error}`).join("\n") +
+      (errs.length > 5 ? `\n  …另有 ${errs.length - 5} 页` : "");
+  }
+
+  const dl = $("download");
+  dl.classList.remove("hidden");
+  dl.onclick = () => location.href = `/api/jobs/${jobId}/download`;
+  $("verify").classList.remove("hidden");
+  $("verify").disabled = false;
+  $("start").disabled = false;
+  loadHistory();
+}
+
+// ---- 复查比对：用相同配置重跑，逐页对照 ----
+let lastJobId = null;
+
+$("verify").onclick = async () => {
+  if (!lastJobId) return;
+  $("verify").disabled = true;
+  $("verify-tip").textContent = "正在重新检测…";
+  $("grids").innerHTML = "";
+  cells = [];
+  $("log").textContent = "";
+  $("bar").style.width = "0";
+  $("progress-card").classList.remove("hidden");
+  const fd = new FormData();
+  // Key 不落盘，从当前输入框重新带上
+  fd.append("api_key",
+    $("provider").value === "openai" ? $("okey").value : $("apikey").value);
+  try {
+    const res = await fetch(`/api/jobs/${lastJobId}/verify`,
+                            { method: "POST", body: fd });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const { job_id } = await res.json();
+    $("verify-tip").textContent = "";
+    poll(job_id, 0);
+  } catch (err) {
+    $("verify-tip").textContent = "";
+    showError("复查失败: " + err.message);
+    $("verify").disabled = false;
+  }
+};
+
+function renderDiff(j) {
+  const box = $("diffbox");
+  if (!j.verify_of) { box.classList.add("hidden"); return; }
+  const d = j.diff || [];
+  box.classList.remove("hidden");
+  box.classList.toggle("same", d.length === 0);
+  if (!d.length) {
+    box.innerHTML = "✅ 复查完成：两次识别结果<b>完全一致</b>，" +
+      `${j.total} 页全部对得上。`;
+    return;
+  }
+  box.innerHTML = `🔀 复查完成：${j.total} 页中有 <b>${d.length} 页</b>两次结果不一致` +
+    "（下方统计与本次 PDF 用的是<b>第二次</b>的结果）：<br>" +
+    d.map(x => `　${esc(x.file)} 第${x.page}页　` +
+      `第一次 <b>${esc(x.before.join("、") || "未识别")}</b>` +
+      `　→　第二次 <b>${esc(x.after.join("、") || "未识别")}</b>`).join("<br>");
+}
+
+// ---- 历史记录 ----
+const SRC_NAME = { text: "文本层", ocr: "OCR", llm: "大模型",
+                   none: "未识别", error: "出错" };
+
+async function loadHistory() {
+  try {
+    const { items } = await (await fetch("/api/history")).json();
+    if (!items.length) {
+      $("history").innerHTML = '<div class="hint">还没有记录</div>';
+      return;
+    }
+    $("history").innerHTML = items.map(renderHist).join("");
+  } catch {
+    $("history").innerHTML = '<div class="hint">历史记录读取失败</div>';
+  }
+}
+
+function renderHist(it) {
+  const t = new Date(it.finished_at * 1000).toLocaleString("zh-CN");
+  const secs = Math.max(0, it.finished_at - it.created_at).toFixed(0);
+  const files = it.files.map(f => `${f.name}(${f.pages}页)`).join("、");
+  const ok = it.status === "done";
+  const c = it.config || {};
+  const src = ok && it.stats
+    ? Object.entries(it.stats.sources)
+        .map(([k, v]) => `${SRC_NAME[k] || k} ${v}`).join(" / ")
+    : esc((it.error || "").split("\n")[0]);
+  const dl = it.has_output
+    ? `<button class="btn dl" onclick="location.href='/api/jobs/${it.id}/download'">下载</button>`
+    : '<span class="hint">文件已清理</span>';
+  const del = `<button class="btn ghost tiny" onclick="delHist('${it.id}', this)">删除</button>`;
+  // 复查任务额外标出与上一次的差异
+  let diffLine = "";
+  if (it.verify_of) {
+    const n = (it.diff || []).length;
+    diffLine = `<div class="hist-meta" style="color:${n ? "#1d4ed8" : "#15803d"}">` +
+      (n ? `复查：${n} 页与上次不一致` : "复查：与上次完全一致") + "</div>";
+  }
+  return `<div class="hist-item">
+    <div class="hist-head">
+      <div><span class="tag ${ok ? "done" : "error"}">${ok ? "成功" : "失败"}</span>
+        ${it.verify_of ? '<span class="tag verify">复查</span>' : ""}
+        <b style="margin-left:6px">${it.total} 页</b>
+        <span class="hist-time" style="margin-left:8px">${t} · 耗时 ${secs}s</span></div>
+      <div style="display:flex;gap:8px;align-items:center">${dl}${del}</div>
+    </div>
+    <div class="hist-meta">${esc(files)}</div>
+    <div class="hist-meta">${src}</div>
+    ${diffLine}
+    <div class="hist-meta">方案 ${esc(c.fallback || "-")}${
+      c.fallback && c.fallback.includes("llm")
+        ? ` · ${esc(c.provider || "")} ${esc(c.model || "")}` : ""
+    } · ${c.threads || "-"} 线程${c.recheck === false ? "" : " · 已开可疑页复查"}</div>
+  </div>`;
+}
+
+// 两段式删除，避免 confirm 弹窗
+async function delHist(id, btn) {
+  if (btn.dataset.armed !== "1") {
+    btn.dataset.armed = "1";
+    btn.textContent = "确认删除?";
+    btn.style.color = "var(--err)";
+    setTimeout(() => {
+      if (!btn.isConnected) return;
+      btn.dataset.armed = "0";
+      btn.textContent = "删除";
+      btn.style.color = "";
+    }, 3000);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "删除中…";
+  try {
+    const r = await fetch(`/api/history/${id}`, { method: "DELETE" });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    loadHistory();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "删除失败";
+    btn.title = e.message;
+  }
+}
+
+$("refresh-hist").onclick = loadHistory;
+loadHistory();
+
+function showError(msg) {
+  $("result-card").classList.remove("hidden");
+  $("stats").innerHTML = "";
+  $("download").classList.add("hidden");
+  $("warnbox").classList.add("hidden");
+  $("rcbox").classList.add("hidden");
+  $("suspbox").classList.add("hidden");
+  $("diffbox").classList.add("hidden");
+  $("errbox").classList.remove("hidden");
+  $("errbox").textContent = msg;
+  loadHistory();
+}
+</script>
+</body>
+</html>

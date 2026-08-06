@@ -1,0 +1,24 @@
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Claude Code 本地设置 —— 会记录带 API Key 的命令，绝不能提交
+.claude/
+
+# 运行时产物
+/tmp/label_sorter_jobs/
+*.pdf
+history.json
+
+# 编辑器与系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
