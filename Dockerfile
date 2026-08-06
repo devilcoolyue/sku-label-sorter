@@ -20,6 +20,15 @@ RUN pip install --no-cache-dir \
         openai anthropic \
         rapidocr-onnxruntime opencv-python-headless
 
+# rapidocr 声明的依赖是 opencv-python（带 GUI 的那个），于是它和 headless 会被
+# 同时装上 —— 两者提供同一个 cv2 模块，后装的赢，结果 cv2 落到需要 X11 的那份，
+# 在 slim 镜像里一 import 就 ImportError: libxcb.so.1。
+# 与其补装一堆图形库，不如让 cv2 只由 headless 提供。两个一起卸干净再装回
+# headless，是因为它们共用同一个 cv2 目录，只卸其中一个会留下残缺文件。
+RUN pip uninstall -y opencv-python opencv-python-headless \
+    && pip install --no-cache-dir opencv-python-headless \
+    && python -c "import cv2; from rapidocr_onnxruntime import RapidOCR; RapidOCR()"
+
 WORKDIR /app
 COPY label_sorter/ /app/label_sorter/
 
