@@ -271,6 +271,7 @@
     <div class="actions">
       <button class="btn dl hidden" id="download">下载排序后的 PDF</button>
       <button class="btn ghost hidden" id="verify">用相同配置复查比对</button>
+      <button class="btn ghost hidden" id="verify2">用当前配置复查比对</button>
       <span id="verify-tip" class="hint" style="margin:0"></span>
     </div>
   </div>
@@ -392,21 +393,9 @@ function loadConfig() {
 loadConfig();
 syncVisibility();
 
-// ---- 提交任务 ----
-$("start").onclick = async () => {
-  $("start").disabled = true;
-  $("progress-card").classList.remove("hidden");
-  $("result-card").classList.add("hidden");
-  $("log").textContent = "";
-  $("grids").innerHTML = "";
-  cells = [];
-  $("verify").classList.add("hidden");
-  $("diffbox").classList.add("hidden");
-  $("bar").style.width = "0";
-  $("progress-text").textContent = "上传中…";
-
-  const fd = new FormData();
-  files.forEach(f => fd.append("files", f));
+// 把表单里当前这套配置写进 FormData —— 提交任务和「换配置复查」共用，
+// 免得两处各写一遍、改了一处忘了另一处。
+function appendConfig(fd) {
   fd.append("prefixes", $("prefixes").value);
   fd.append("fallback", $("fallback").value);
   fd.append("threads", $("threads").value);
@@ -421,6 +410,25 @@ $("start").onclick = async () => {
     fd.append("model", $("model").value);
     fd.append("api_key", $("apikey").value);
   }
+}
+
+// ---- 提交任务 ----
+$("start").onclick = async () => {
+  $("start").disabled = true;
+  $("progress-card").classList.remove("hidden");
+  $("result-card").classList.add("hidden");
+  $("log").textContent = "";
+  $("grids").innerHTML = "";
+  cells = [];
+  $("verify").classList.add("hidden");
+  $("verify2").classList.add("hidden");
+  $("diffbox").classList.add("hidden");
+  $("bar").style.width = "0";
+  $("progress-text").textContent = "上传中…";
+
+  const fd = new FormData();
+  files.forEach(f => fd.append("files", f));
+  appendConfig(fd);
 
   try {
     const res = await fetch("/api/jobs", { method: "POST", body: fd });
@@ -561,7 +569,9 @@ function showResult(jobId, j) {
   dl.classList.remove("hidden");
   dl.onclick = () => location.href = `/api/jobs/${jobId}/download`;
   $("verify").classList.remove("hidden");
+  $("verify2").classList.remove("hidden");
   $("verify").disabled = false;
+  $("verify2").disabled = false;
   $("start").disabled = false;
   loadHistory();
 }
@@ -569,9 +579,13 @@ function showResult(jobId, j) {
 // ---- 复查比对：用相同配置重跑，逐页对照 ----
 let lastJobId = null;
 
-$("verify").onclick = async () => {
+// override=false：同配置重跑，查「同一方案两次结果稳不稳」
+// override=true ：改用表单当前配置，查「两种方案看法一不一致」
+//                 （典型用法：先 OCR 跑一遍，再切大模型复验）
+async function runVerify(override) {
   if (!lastJobId) return;
   $("verify").disabled = true;
+  $("verify2").disabled = true;
   $("verify-tip").textContent = "正在重新检测…";
   $("grids").innerHTML = "";
   cells = [];
@@ -579,9 +593,14 @@ $("verify").onclick = async () => {
   $("bar").style.width = "0";
   $("progress-card").classList.remove("hidden");
   const fd = new FormData();
-  // Key 不落盘，从当前输入框重新带上
-  fd.append("api_key",
-    $("provider").value === "openai" ? $("okey").value : $("apikey").value);
+  if (override) {
+    fd.append("override", "1");
+    appendConfig(fd);
+  } else {
+    // 沿用原配置，只是 Key 不落盘，得从当前输入框重新带上
+    fd.append("api_key",
+      $("provider").value === "openai" ? $("okey").value : $("apikey").value);
+  }
   try {
     const res = await fetch(`/api/jobs/${lastJobId}/verify`,
                             { method: "POST", body: fd });
@@ -593,8 +612,12 @@ $("verify").onclick = async () => {
     $("verify-tip").textContent = "";
     showError("复查失败: " + err.message);
     $("verify").disabled = false;
+    $("verify2").disabled = false;
   }
-};
+}
+
+$("verify").onclick = () => runVerify(false);
+$("verify2").onclick = () => runVerify(true);
 
 function renderDiff(j) {
   const box = $("diffbox");
@@ -602,16 +625,20 @@ function renderDiff(j) {
   const d = j.diff || [];
   box.classList.remove("hidden");
   box.classList.toggle("same", d.length === 0);
+  // 换了配置时按方案名标注，否则「第一次/第二次」看不出差异从何而来
+  const cross = j.verify_override && j.verify_base_desc && j.verify_desc;
+  const A = cross ? esc(j.verify_base_desc) : "第一次";
+  const B = cross ? esc(j.verify_desc) : "第二次";
+  const head = cross ? `换配置复查完成（${A} → ${B}）：` : "复查完成：";
   if (!d.length) {
-    box.innerHTML = "✅ 复查完成：两次识别结果<b>完全一致</b>，" +
-      `${j.total} 页全部对得上。`;
+    box.innerHTML = `✅ ${head}两次识别结果<b>完全一致</b>，${j.total} 页全部对得上。`;
     return;
   }
-  box.innerHTML = `🔀 复查完成：${j.total} 页中有 <b>${d.length} 页</b>两次结果不一致` +
-    "（下方统计与本次 PDF 用的是<b>第二次</b>的结果）：<br>" +
+  box.innerHTML = `🔀 ${head}${j.total} 页中有 <b>${d.length} 页</b>结果不一致` +
+    `（下方统计与本次 PDF 用的是 <b>${B}</b> 的结果）：<br>` +
     d.map(x => `　${esc(x.file)} 第${x.page}页　` +
-      `第一次 <b>${esc(x.before.join("、") || "未识别")}</b>` +
-      `　→　第二次 <b>${esc(x.after.join("、") || "未识别")}</b>`).join("<br>");
+      `${A} <b>${esc(x.before.join("、") || "未识别")}</b>` +
+      `　→　${B} <b>${esc(x.after.join("、") || "未识别")}</b>`).join("<br>");
 }
 
 // ---- 历史记录 ----

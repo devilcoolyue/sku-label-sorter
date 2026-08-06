@@ -175,6 +175,43 @@ def _run_job(job_id):
         })
 
 
+def build_config(prefixes, fallback, provider, model, api_key, base_url,
+                 threads, recheck):
+    """校验并归一化一份识别配置。创建任务与「换配置复查」共用同一套规则。"""
+    if fallback not in ("none", "ocr", "llm", "ocr+llm"):
+        raise HTTPException(400, "fallback 参数无效")
+    if provider not in ("anthropic", "openai"):
+        raise HTTPException(400, "provider 参数无效")
+    if not 1 <= threads <= sorter.MAX_THREADS:
+        raise HTTPException(400, f"线程数需在 1~{sorter.MAX_THREADS} 之间")
+    if "llm" in fallback and not model.strip():
+        raise HTTPException(400, "使用大模型时必须填写模型名")
+    prefix_list = [p.strip().upper() for p in prefixes.split(",") if p.strip()]
+    if not prefix_list:
+        raise HTTPException(400, "SKU 前缀不能为空")
+    return {
+        "prefixes": prefix_list,
+        "fallback": fallback,
+        "provider": provider,
+        "model": model.strip(),
+        "api_key": api_key,
+        "base_url": base_url.strip(),
+        "threads": threads,
+        "recheck": recheck not in ("0", "false", ""),
+    }
+
+
+def describe_config(cfg):
+    """一句话描述识别方案，用来在比对结果里标明两次跑的分别是什么。"""
+    names = {"none": "仅文本层", "ocr": "本地 OCR",
+             "llm": "大模型", "ocr+llm": "OCR + 大模型"}
+    fb = cfg.get("fallback") or ""
+    desc = names.get(fb, fb or "?")
+    if "llm" in fb:
+        desc += f"（{cfg.get('model') or '?'}）"
+    return desc
+
+
 @app.post("/api/jobs")
 async def create_job(
     files: list[UploadFile] = File(...),
@@ -187,17 +224,8 @@ async def create_job(
     threads: int = Form(sorter.DEFAULT_THREADS),
     recheck: str = Form("1"),
 ):
-    if fallback not in ("none", "ocr", "llm", "ocr+llm"):
-        raise HTTPException(400, "fallback 参数无效")
-    if provider not in ("anthropic", "openai"):
-        raise HTTPException(400, "provider 参数无效")
-    if not 1 <= threads <= sorter.MAX_THREADS:
-        raise HTTPException(400, f"线程数需在 1~{sorter.MAX_THREADS} 之间")
-    if "llm" in fallback and not model.strip():
-        raise HTTPException(400, "使用大模型时必须填写模型名")
-    prefix_list = [p.strip().upper() for p in prefixes.split(",") if p.strip()]
-    if not prefix_list:
-        raise HTTPException(400, "SKU 前缀不能为空")
+    cfg = build_config(prefixes, fallback, provider, model, api_key,
+                       base_url, threads, recheck)
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = WORK_DIR / job_id
@@ -237,16 +265,7 @@ async def create_job(
         "page_status": ["pending"] * total_pages,
         "page_skus": [None] * total_pages,
         "output": str(job_dir / OUTPUT_NAME),
-        "config": {
-            "prefixes": prefix_list,
-            "fallback": fallback,
-            "provider": provider,
-            "model": model.strip(),
-            "api_key": api_key,
-            "base_url": base_url.strip(),
-            "threads": threads,
-            "recheck": recheck not in ("0", "false", ""),
-        },
+        "config": cfg,
         "done": 0,
         "total": total_pages,
         "log": [],
@@ -277,6 +296,9 @@ async def job_status(job_id: str, log_from: int = 0):
         "stats": job["stats"],
         "error": job["error"],
         "verify_of": job.get("verify_of"),
+        "verify_base_desc": job.get("verify_base_desc"),
+        "verify_desc": job.get("verify_desc"),
+        "verify_override": job.get("verify_override"),
         "diff": job.get("diff"),
     })
 
@@ -294,10 +316,25 @@ async def job_download(job_id: str):
 
 
 @app.post("/api/jobs/{job_id}/verify")
-async def verify_job(job_id: str, api_key: str = Form("")):
-    """用原任务的配置把同一批文件重跑一遍，逐页比对两次结果。
+async def verify_job(
+    job_id: str,
+    api_key: str = Form(""),
+    override: str = Form("0"),
+    prefixes: str = Form(""),
+    fallback: str = Form(""),
+    provider: str = Form(""),
+    model: str = Form(""),
+    base_url: str = Form(""),
+    threads: int = Form(sorter.DEFAULT_THREADS),
+    recheck: str = Form("1"),
+):
+    """把同一批文件重跑一遍，逐页比对两次结果。
 
-    api_key 不落盘，所以由前端重新带上；其余配置从历史记录里取。
+    override=0：沿用原任务配置，查的是「同一方案两次跑结果稳不稳」。
+    override=1：改用前端当前配置，可以先 OCR 跑一遍再用大模型复验，
+                查的是「两种方案看法一不一致」。
+
+    api_key 不落盘，所以两种模式都要前端重新带上。
     """
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(404, "任务不存在")
@@ -310,7 +347,12 @@ async def verify_job(job_id: str, api_key: str = Form("")):
         raise HTTPException(404, "原任务记录已不存在")
 
     baseline = json.loads(pages_file.read_text("utf-8"))
-    cfg = dict(hist["config"])
+    base_cfg = dict(hist["config"])
+    if override == "1":
+        cfg = build_config(prefixes, fallback, provider, model, api_key,
+                           base_url, threads, recheck)
+    else:
+        cfg = {**base_cfg, "api_key": api_key}
     inputs = []
     for f in hist["files"]:
         p = src_dir / f["name"]
@@ -330,8 +372,12 @@ async def verify_job(job_id: str, api_key: str = Form("")):
         "page_skus": [None] * hist["total"],
         "baseline": baseline,
         "verify_of": job_id,
+        # 换了配置时，比对结果里要标明两次跑的分别是什么方案，否则看不懂差异从何而来
+        "verify_base_desc": describe_config(base_cfg),
+        "verify_desc": describe_config(cfg),
+        "verify_override": override == "1",
         "output": str(new_dir / OUTPUT_NAME),
-        "config": {**cfg, "api_key": api_key},
+        "config": cfg,
         "done": 0,
         "total": hist["total"],
         "log": [],
