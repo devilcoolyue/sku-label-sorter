@@ -1,0 +1,12 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.claude/
+.git/
+*.pdf
+history.json
+.DS_Store
+.idea/
+.vscode/

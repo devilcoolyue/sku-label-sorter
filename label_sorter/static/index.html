@@ -17,6 +17,13 @@
   }
   .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 60px; }
   h1 { font-size: 22px; margin: 0 0 4px; }
+  #logout {
+    float: right; margin-top: 2px; padding: 5px 12px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); color: var(--muted);
+    font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+  #logout:hover { color: var(--text); border-color: var(--muted); }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
   .card {
     background: var(--card); border: 1px solid var(--border);
@@ -155,6 +162,7 @@
 </head>
 <body>
 <div class="wrap">
+  <button id="logout" type="button">退出登录</button>
   <h1>面单 SKU 排序合并</h1>
   <div class="sub">上传一个或多个面单 PDF，按 SKU 全局排序后合并为一个新 PDF（文本层优先，图片 SKU 可用 OCR / 大模型识别兜底）</div>
 
@@ -274,6 +282,22 @@
 </div>
 
 <script>
+// 会话过期后任何接口都会返回 401。统一在这里兜住，省得每个调用点各写一遍。
+const rawFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const res = await rawFetch(...args);
+  if (res.status === 401) {
+    location.reload();          // 服务端会换回登录页
+    await new Promise(() => {});  // 永不 resolve，避免调用方继续解析 401 响应
+  }
+  return res;
+};
+
+document.getElementById("logout").addEventListener("click", async () => {
+  await rawFetch("/api/logout", { method: "POST" });
+  location.replace("/");
+});
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));

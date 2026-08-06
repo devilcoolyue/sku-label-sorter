@@ -16,10 +16,10 @@ import uuid
 from pathlib import Path
 
 import fitz
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 
+import auth as auth_mod
 import sorter
 
 BASE_DIR = Path(__file__).parent
@@ -28,6 +28,14 @@ WORK_DIR.mkdir(parents=True, exist_ok=True)
 HISTORY_FILE = WORK_DIR / "history.json"
 
 app = FastAPI(title="面单SKU排序合并")
+
+AUTH = auth_mod.Auth(WORK_DIR)
+LOGIN_PAGE = BASE_DIR / "static" / "login.html"
+INDEX_PAGE = BASE_DIR / "static" / "index.html"
+# 只有登录接口是敞开的，其余一律要 Cookie
+PUBLIC_PATHS = {"/api/login"}
+# 明文 HTTP 下不能带 Secure，否则浏览器根本不存这个 Cookie；上了 HTTPS 记得开
+COOKIE_SECURE = os.environ.get("SORTER_COOKIE_SECURE", "0") == "1"
 
 JOBS = {}  # job_id -> dict
 JOBS_LOCK = threading.Lock()
@@ -364,10 +372,64 @@ async def history():
     return {"items": items}
 
 
-app.mount("/", StaticFiles(directory=BASE_DIR / "static", html=True),
-          name="static")
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    """全局闸门：没有有效 Cookie 时，接口返回 401，页面返回登录页。
+
+    页面必须在服务端拦掉 —— 只靠前端 JS 跳转的话 HTML 早就发出去了。
+    """
+    if request.url.path in PUBLIC_PATHS or AUTH.verify_token(
+            request.cookies.get(auth_mod.COOKIE)):
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
+    return FileResponse(LOGIN_PAGE)
+
+
+@app.post("/api/login")
+async def login(request: Request):
+    ip = request.client.host if request.client else "?"
+    left = AUTH.locked_for(ip)
+    if left:
+        raise HTTPException(429, f"失败次数过多，请 {left // 60 + 1} 分钟后再试")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "请求格式错误")
+    if not AUTH.check(ip, body.get("username", ""), body.get("password", "")):
+        raise HTTPException(401, "用户名或密码错误")
+
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(
+        auth_mod.COOKIE, AUTH.make_token(auth_mod.USER),
+        max_age=int(auth_mod.SESSION_HOURS * 3600),
+        httponly=True, samesite="strict", secure=COOKIE_SECURE, path="/",
+    )
+    return resp
+
+
+@app.post("/api/logout")
+async def logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth_mod.COOKIE, path="/")
+    return resp
+
+
+@app.get("/{full_path:path}")
+async def page(full_path: str):
+    """走到这里说明已登录（未登录的在中间件就被换成登录页了）。"""
+    if full_path.startswith("api/"):  # 没匹配上的接口不该回 HTML
+        raise HTTPException(404, "接口不存在")
+    return FileResponse(INDEX_PAGE)
 
 
 if __name__ == "__main__":
     import uvicorn
+    if AUTH.initial_password:
+        print("=" * 60, flush=True)
+        print("  未设置 SORTER_PASSWORD，已生成随机口令：", flush=True)
+        print(f"  用户名 {auth_mod.USER}   密码 {AUTH.initial_password}",
+              flush=True)
+        print(f"  （已存于 {WORK_DIR / '.password'}）", flush=True)
+        print("=" * 60, flush=True)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

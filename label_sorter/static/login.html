@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 面单 SKU 排序</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c2330; --muted: #6b7280;
+    --accent: #2563eb; --accent-hover: #1d4ed8; --border: #e3e6eb;
+    --err: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex;
+    align-items: center; justify-content: center;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC",
+          "Microsoft YaHei", "Segoe UI", sans-serif;
+  }
+  .box {
+    width: 100%; max-width: 360px; margin: 20px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 32px 28px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; }
+  .sub { margin: 0 0 24px; color: var(--muted); font-size: 13px; }
+  label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
+  input {
+    width: 100%; padding: 9px 11px; margin-bottom: 16px;
+    border: 1px solid var(--border); border-radius: 7px;
+    font-size: 14px; font-family: inherit; background: #fff; color: var(--text);
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  button {
+    width: 100%; padding: 10px; border: 0; border-radius: 7px;
+    background: var(--accent); color: #fff; font-size: 15px;
+    font-family: inherit; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--accent-hover); }
+  button:disabled { opacity: .6; cursor: default; }
+  .msg {
+    margin-top: 14px; font-size: 13px; color: var(--err);
+    min-height: 20px; text-align: center;
+  }
+</style>
+</head>
+<body>
+  <form class="box" id="form">
+    <h1>面单 SKU 排序合并</h1>
+    <p class="sub">请先登录</p>
+
+    <label for="u">用户名</label>
+    <input id="u" name="username" autocomplete="username" autofocus required>
+
+    <label for="p">密码</label>
+    <input id="p" name="password" type="password"
+           autocomplete="current-password" required>
+
+    <button id="btn" type="submit">登录</button>
+    <div class="msg" id="msg"></div>
+  </form>
+
+<script>
+const form = document.getElementById("form");
+const btn  = document.getElementById("btn");
+const msg  = document.getElementById("msg");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  btn.disabled = true;
+  btn.textContent = "登录中…";
+  msg.textContent = "";
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: document.getElementById("u").value,
+        password: document.getElementById("p").value,
+      }),
+    });
+    if (res.ok) {
+      // Cookie 已种下，重新请求 / 就会拿到真正的页面
+      location.replace("/");
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    msg.textContent = data.detail || `登录失败（${res.status}）`;
+  } catch (err) {
+    msg.textContent = "网络错误，请重试";
+  }
+  btn.disabled = false;
+  btn.textContent = "登录";
+  document.getElementById("p").select();
+});
+</script>
+</body>
+</html>

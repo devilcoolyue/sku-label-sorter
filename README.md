@@ -50,6 +50,26 @@ python app.py                 # 默认 http://0.0.0.0:8000
 使用大模型兜底时，在服务器设置 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
 环境变量，或在前端配置页里直接填入 API Key（服务端只在任务期间留在内存里）。
 
+## 登录鉴权
+
+服务默认开启登录，未登录时**任何路径都返回登录页**、任何 `/api/` 请求都返回
+401 —— 拦截做在服务端中间件里，不是前端跳转，所以直接敲 URL 也拿不到页面。
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `SORTER_USER` | `admin` | 用户名 |
+| `SORTER_PASSWORD` | 随机生成 | 未设置时启动生成一个强口令，打印到日志并存入 `$SORTER_WORK_DIR/.password`（0600） |
+| `SORTER_SESSION_HOURS` | `12` | 登录有效期 |
+| `SORTER_COOKIE_SECURE` | `0` | 上了 HTTPS 就设为 `1` |
+
+- token 是 HMAC-SHA256 签名的，密钥存在 `$SORTER_WORK_DIR/.secret`，
+  **服务重启不掉线**；无服务端会话表，也就没有多进程共享的问题
+- token 放在 `HttpOnly` + `SameSite=Strict` 的 Cookie 里，JS 读不到
+- 同一 IP 连续 5 次登录失败锁定 15 分钟
+
+刻意不设弱默认口令（没有 `admin/admin`），漏配 `SORTER_PASSWORD` 时会随机生成
+而不是放行。
+
 ## 页面流程
 
 1. 拖拽/选择一个或多个 PDF
@@ -119,11 +139,30 @@ python app.py                 # 默认 http://0.0.0.0:8000
 ```
 .
 ├── sort_labels_by_sku.py       # 命令行版（无需 Web，单文件可独立使用）
+├── Dockerfile                  # 容器化部署（老系统装不动依赖时走这个）
 └── label_sorter/               # Web 版
     ├── app.py                  # FastAPI 后端（上传/任务/进度/历史/下载）
+    ├── auth.py                 # 登录鉴权（签名 token + 失败锁定）
     ├── sorter.py               # 核心识别与排序逻辑（也可单独 import 使用）
-    └── static/index.html       # 前端页面
+    └── static/
+        ├── index.html          # 主页面
+        └── login.html          # 登录页
 ```
+
+## Docker 部署
+
+```bash
+docker build -t sku-label-sorter .
+docker run -d --name sku-label-sorter --restart unless-stopped \
+  -p 8000:8000 -v /your/data:/data \
+  -e SORTER_PASSWORD='你的口令' \
+  sku-label-sorter
+```
+
+镜像基于 `python:3.11-slim`，约 712MB（大头是 OCR 用的 onnxruntime）。
+数据卷挂 `/data`，历史记录与登录密钥都在里面，容器重建不丢。
+
+**必须单进程跑**，不要加 `--workers` —— 任务状态存在进程内存里。
 
 ## License
 
