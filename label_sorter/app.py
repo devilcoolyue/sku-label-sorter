@@ -418,6 +418,20 @@ async def history():
     return {"items": items}
 
 
+def html_page(path):
+    """返回页面，并禁止浏览器缓存。
+
+    "/" 这个地址会随登录状态返回登录页或主页面，内容不由 URL 唯一决定。
+    只带 etag/last-modified 而不带 Cache-Control 时，浏览器会启用启发式
+    缓存——自己猜一个有效期，期间根本不回源。结果就是登录成功后跳回 "/"
+    拿到的还是缓存里的登录页，非得手动刷新才进得去。
+    """
+    return FileResponse(path, headers={
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Vary": "Cookie",
+    })
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     """全局闸门：没有有效 Cookie 时，接口返回 401，页面返回登录页。
@@ -429,7 +443,7 @@ async def require_login(request: Request, call_next):
         return await call_next(request)
     if request.url.path.startswith("/api/"):
         return JSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
-    return FileResponse(LOGIN_PAGE)
+    return html_page(LOGIN_PAGE)
 
 
 @app.post("/api/login")
@@ -466,7 +480,7 @@ async def page(full_path: str):
     """走到这里说明已登录（未登录的在中间件就被换成登录页了）。"""
     if full_path.startswith("api/"):  # 没匹配上的接口不该回 HTML
         raise HTTPException(404, "接口不存在")
-    return FileResponse(INDEX_PAGE)
+    return html_page(INDEX_PAGE)
 
 
 if __name__ == "__main__":
