@@ -59,7 +59,7 @@ python app.py                 # 默认 http://0.0.0.0:8000
 |---|---|---|
 | `SORTER_USER` | `admin` | 用户名 |
 | `SORTER_PASSWORD` | 随机生成 | 未设置时启动生成一个强口令，打印到日志并存入 `$SORTER_WORK_DIR/.password`（0600） |
-| `SORTER_SESSION_HOURS` | `12` | 登录有效期 |
+| `SORTER_SESSION_HOURS` | `720` | 登录有效期（30 天） |
 | `SORTER_COOKIE_SECURE` | `0` | 上了 HTTPS 就设为 `1` |
 
 - token 是 HMAC-SHA256 签名的，密钥存在 `$SORTER_WORK_DIR/.secret`，

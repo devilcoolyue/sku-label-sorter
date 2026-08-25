@@ -15,7 +15,7 @@ import threading
 import time
 
 COOKIE = "sorter_session"
-SESSION_HOURS = float(os.environ.get("SORTER_SESSION_HOURS", "12"))
+SESSION_HOURS = float(os.environ.get("SORTER_SESSION_HOURS", "720"))
 USER = os.environ.get("SORTER_USER", "admin")
 
 # 登录失败锁定：同一 IP 连续失败 FAIL_LIMIT 次，锁 LOCK_SECONDS
