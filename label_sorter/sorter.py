@@ -485,13 +485,22 @@ def sort_and_merge(input_paths, output_path, prefixes=None,
 
     docs = [fitz.open(p) for p in input_paths]
     out = fitz.open()
-    for i in order:
-        di, pi, *_ = records[i]
-        out.insert_pdf(docs[di], from_page=pi, to_page=pi)
-    out.save(output_path)
-    out.close()
-    for d in docs:
-        d.close()
+    remaining = page_counts.copy()
+    try:
+        for i in order:
+            di, pi, *_ = records[i]
+            remaining[di] -= 1
+            # Keep each source document's graft map until its final page. Without
+            # this, shared fonts and images are copied again for every page.
+            out.insert_pdf(
+                docs[di], from_page=pi, to_page=pi,
+                final=remaining[di] == 0,
+            )
+        out.save(output_path, garbage=4, deflate=True, use_objstms=1)
+    finally:
+        out.close()
+        for d in docs:
+            d.close()
 
     counts = {}
     sku_counts = {}
