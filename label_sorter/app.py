@@ -42,6 +42,7 @@ JOBS_LOCK = threading.Lock()
 HISTORY_LOCK = threading.Lock()
 MAX_LOG_LINES = 500
 MAX_HISTORY = 50
+HISTORY_PAGE_SIZE = 10
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 OUTPUT_NAME = "sorted_merged.pdf"
 PAGES_NAME = "pages.json"  # 逐页识别结果，复查比对的基线
@@ -411,11 +412,20 @@ async def delete_history(job_id: str):
 
 
 @app.get("/api/history")
-async def history():
+async def history(offset: int = 0, limit: int = HISTORY_PAGE_SIZE):
+    if offset < 0 or not 1 <= limit <= MAX_HISTORY:
+        raise HTTPException(400, "分页参数无效")
     items = load_history()
-    for it in items:  # 目录可能已被清理，前端据此禁用下载按钮
+    page = items[offset:offset + limit]
+    for it in page:  # 目录可能已被清理，前端据此禁用下载按钮
         it["has_output"] = (WORK_DIR / it["id"] / OUTPUT_NAME).exists()
-    return {"items": items}
+    next_offset = offset + len(page)
+    return {
+        "items": page,
+        "has_more": next_offset < len(items),
+        "next_offset": next_offset,
+        "total": len(items),
+    }
 
 
 def html_page(path):

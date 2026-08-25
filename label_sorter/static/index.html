@@ -121,6 +121,14 @@
   .hist-time { color: var(--muted); font-size: 12px; }
   .hist-meta { color: var(--muted); font-size: 12px; margin-top: 5px; }
   .hist-item .btn.dl { padding: 5px 14px; font-size: 12px; border-radius: 7px; }
+  .hist-pager { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 8px; }
+  .hist-more {
+    width: 100%; min-height: 36px; border: 0; background: transparent;
+    color: var(--accent); font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .hist-more:hover { background: #f2f5f9; }
+  .hist-more:disabled { color: var(--muted); cursor: wait; background: transparent; }
+  .hist-end { color: var(--muted); font-size: 12px; line-height: 36px; text-align: center; }
   .tag { font-size: 11px; padding: 1px 7px; border-radius: 10px; }
   .tag.done { background: #dcfce7; color: #15803d; }
   .tag.error { background: #fee2e2; color: #b91c1c; }
@@ -278,7 +286,11 @@
 
   <div class="card">
     <h2>⑤ 历史记录 <button class="btn ghost tiny" id="refresh-hist">刷新</button></h2>
-    <div id="history"><div class="hint">加载中…</div></div>
+    <div id="history-list" aria-live="polite"><div class="hint">加载中…</div></div>
+    <div id="history-pager" class="hist-pager hidden">
+      <button id="load-more-hist" class="hist-more" type="button">加载更多</button>
+      <div id="history-end" class="hist-end hidden">到底了</div>
+    </div>
   </div>
 </div>
 
@@ -644,17 +656,59 @@ function renderDiff(j) {
 // ---- 历史记录 ----
 const SRC_NAME = { text: "文本层", ocr: "OCR", llm: "大模型",
                    none: "未识别", error: "出错" };
+const HISTORY_PAGE_SIZE = 10;
+let historyOffset = 0;
+let historyHasMore = false;
+let historyLoading = false;
+let historyLoadFailed = false;
 
-async function loadHistory() {
+function renderHistoryPager() {
+  const pager = $("history-pager");
+  const more = $("load-more-hist");
+  const end = $("history-end");
+  const showPager = historyLoadFailed || historyHasMore || historyOffset > 0;
+  pager.classList.toggle("hidden", !showPager);
+  more.classList.toggle("hidden", !historyLoadFailed && !historyHasMore);
+  end.classList.toggle(
+    "hidden", historyLoadFailed || historyHasMore || historyOffset === 0);
+  more.disabled = historyLoading;
+  more.textContent = historyLoading ? "加载中…" :
+    (historyLoadFailed ? "加载失败，点击重试" : "加载更多");
+}
+
+async function loadHistory(reset = true) {
+  if (historyLoading) return;
+  const list = $("history-list");
+  if (reset) {
+    historyOffset = 0;
+    historyHasMore = false;
+    list.innerHTML = '<div class="hint">加载中…</div>';
+  }
+  historyLoading = true;
+  historyLoadFailed = false;
+  list.setAttribute("aria-busy", "true");
+  renderHistoryPager();
   try {
-    const { items } = await (await fetch("/api/history")).json();
-    if (!items.length) {
-      $("history").innerHTML = '<div class="hint">还没有记录</div>';
-      return;
+    const res = await fetch(
+      `/api/history?offset=${historyOffset}&limit=${HISTORY_PAGE_SIZE}`);
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const { items, has_more, next_offset } = await res.json();
+    if (reset) list.innerHTML = "";
+    if (items.length) {
+      list.insertAdjacentHTML("beforeend", items.map(renderHist).join(""));
     }
-    $("history").innerHTML = items.map(renderHist).join("");
+    historyOffset = next_offset;
+    historyHasMore = has_more;
+    if (!list.children.length) {
+      list.innerHTML = '<div class="hint">还没有记录</div>';
+    }
   } catch {
-    $("history").innerHTML = '<div class="hint">历史记录读取失败</div>';
+    historyLoadFailed = true;
+    if (reset) list.innerHTML = '<div class="hint">历史记录读取失败</div>';
+  } finally {
+    historyLoading = false;
+    list.removeAttribute("aria-busy");
+    renderHistoryPager();
   }
 }
 
@@ -724,7 +778,8 @@ async function delHist(id, btn) {
   }
 }
 
-$("refresh-hist").onclick = loadHistory;
+$("refresh-hist").onclick = () => loadHistory(true);
+$("load-more-hist").onclick = () => loadHistory(false);
 loadHistory();
 
 function showError(msg) {
