@@ -496,7 +496,9 @@ def sort_and_merge(input_paths, output_path, prefixes=None,
                 docs[di], from_page=pi, to_page=pi,
                 final=remaining[di] == 0,
             )
-        out.save(output_path, garbage=4, deflate=True, use_objstms=1)
+        # Compact unused objects without costly cross-object deduplication.
+        # Shared source resources are already preserved by the graft maps above.
+        out.save(output_path, garbage=2, deflate=True, use_objstms=1)
     finally:
         out.close()
         for d in docs:
